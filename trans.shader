@@ -16,6 +16,7 @@
     SubShader
     {
 		Cull Off
+		ZWrite Off
         Tags {"Queue" = "Transparent" "RenderType"="Transparent" }
         LOD 300
    
@@ -23,6 +24,7 @@
 		
 		#pragma target 5.0
         #include "Tessellation.cginc"
+		#include "UnityCG.cginc"
  
 		//Edge Based
 		//#pragma surface surf Standard fullforwardshadows alpha:fade vertex:disp tessellate:tessEdge
@@ -56,8 +58,8 @@
 		
 	    float4 tessDistance (appdata v0, appdata v1, appdata v2) 
 		{
-			float minDist = .25;
-			float maxDist = 15.0;
+			float minDist = 10;
+			float maxDist = 30.0;
             return UnityDistanceBasedTess(v0.vertex, v1.vertex, v2.vertex, minDist, maxDist, _Tess);
         }
 
@@ -76,6 +78,7 @@
             float2 uv_MainTex;
 			float2 uv_NormalMap;
 			float2 uv_NormalDetail;
+			 fixed facing : VFACE;
         };
  
 		
@@ -87,10 +90,12 @@
         {
             fixed4 c = tex2D (_MainTex, IN.uv_MainTex) * _Color;
             o.Albedo = c.rgb;			
-			o.Normal =UnpackNormal (tex2D(_NormalMap, IN.uv_NormalMap) + tex2D (_NormalDetail, IN.uv_NormalDetail)*2-1);
+			o.Normal = UnpackNormal(tex2D(_NormalMap, IN.uv_NormalMap) + tex2D (_NormalDetail, IN.uv_NormalDetail)*2-1);
             o.Metallic = _Metallic;
             o.Smoothness = _Glossiness;
             o.Alpha = c.a;
+			
+			
         }
         ENDCG
     }
