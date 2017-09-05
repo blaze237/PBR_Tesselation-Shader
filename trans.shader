@@ -10,19 +10,24 @@ Shader "Custom/Transparent"
         _Glossiness ("Smoothness", Range(0,1)) = 0.5
         _Metallic ("Metallic", Range(0,1)) = 0.0
 
-		_Height ("Height", 2D) = "black"{}
+		_Height ("Height", 2D) = "gray"{}
         _HeightmapTiling ("Heightmap tiling", Float) = 1.0
         _Tess ("Tessellation", Range(1,162)) = 4
-        _Displacement ("Displacement", Range(0, 10.0)) = 0.3
+        _Displacement ("Displacement", Range(-10.0, 10.0)) = 0.3
     }
     SubShader
     {
+	 Cull Off
         Tags {"Queue" = "Transparent" "RenderType"="Transparent" }
-        LOD 200
+        LOD 300
    
         CGPROGRAM
  
-        #pragma surface surf Standard fullforwardshadows alpha:fade vertex:disp tessellate:tessDistance
+		//Edge Based
+       // #pragma surface surf Standard fullforwardshadows alpha:fade vertex:disp tessellate:tessEdge
+		//Distance Based
+		#pragma surface surf Standard fullforwardshadows alpha:fade vertex:disp tessellate:tessDistance
+
         #pragma target 5.0
         #include "Tessellation.cginc"
  
@@ -35,21 +40,32 @@ Shader "Custom/Transparent"
         float2 texcoord2 : TEXCOORD2;
         };
 
-			float _Tess;
+			
             sampler2D _Height;
             float _HeightmapTiling;
- 
+
+		   //Distance based	
+		   float _Tess;
             float4 tessDistance (appdata v0, appdata v1, appdata v2) {
                 float minDist = .25;
                 float maxDist = 15.0;
                 return UnityDistanceBasedTess(v0.vertex, v1.vertex, v2.vertex, minDist, maxDist, _Tess);
             }
+
+
+		   //Edge Based
+		   // float _EdgeLength;
+
+            //float4 tessEdge (appdata v0, appdata v1, appdata v2)
+            //{
+             //   return UnityEdgeLengthBasedTess (v0.vertex, v1.vertex, v2.vertex, _EdgeLength);
+            //}
            
             float _Displacement;
  
             void disp (inout appdata v)
             {
-                float d = tex2Dlod( _Height , float4(v.texcoord.xy * _HeightmapTiling,0,0)).a * _Displacement;
+                	float d = ((tex2Dlod( _Height , float4(v.texcoord.xy * _HeightmapTiling,0,0)).a - 0.5)) * _Displacement;
                 v.vertex.xyz += v.normal * d;
             }
 
