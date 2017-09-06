@@ -35,77 +35,79 @@
 		
 			Pass
 			{
-				Name "Tessel"
+				Name "Refra"
 				Tags { "LightMode" = "Always" }
 				
 				CGPROGRAM
-#pragma vertex vert
-#pragma fragment frag
-#pragma multi_compile_fog
-#include "UnityCG.cginc"
+				#pragma vertex vert
+				#pragma fragment frag
+				#pragma multi_compile_fog
+				#include "UnityCG.cginc"
 
-struct appdata_t {
-	float4 vertex : POSITION;
-	float2 texcoord: TEXCOORD0;
-};
+				struct appdata_t {
+					float4 vertex : POSITION;
+					float2 texcoord: TEXCOORD0;
+				};
 
-struct v2f {
-	float4 vertex : SV_POSITION;
-	float4 uvgrab : TEXCOORD0;
-	float2 uvbump : TEXCOORD1;
-	float2 uvmain : TEXCOORD2;
-	UNITY_FOG_COORDS(3)
-};
+				struct v2f {
+					float4 vertex : SV_POSITION;
+					float4 uvgrab : TEXCOORD0;
+					float2 uvbump : TEXCOORD1;
+					float2 uvmain : TEXCOORD2;
+					UNITY_FOG_COORDS(3)
+				};
 
-float _BumpAmt;
-float4 _BumpMap_ST;
-float4 _NormalDetail_ST;
-float4 _MainTex_ST;
+				float _BumpAmt;
+				float4 _Normal_ST;
+				float4 _NormalDetail_ST;
+				float4 _MainTex_ST;
 
-v2f vert (appdata_t v)
-{
-	v2f o;
-	o.vertex = mul(UNITY_MATRIX_MVP, v.vertex);
-	#if UNITY_UV_STARTS_AT_TOP
-	float scale = -1.0;
-	#else
-	float scale = 1.0;
-	#endif
-	o.uvgrab.xy = (float2(o.vertex.x, o.vertex.y*scale) + o.vertex.w) * 0.5;
-	o.uvgrab.zw = o.vertex.zw;
-	o.uvbump = (TRANSFORM_TEX(v.texcoord, _NormalDetail));// +(TRANSFORM_TEX(v.texcoord, _NormalDetail));
-	o.uvmain = TRANSFORM_TEX( v.texcoord, _MainTex );
-	UNITY_TRANSFER_FOG(o,o.vertex);
-	return o;
-}
+				v2f vert (appdata_t v)
+				{
+					v2f o;
+					o.vertex = mul(UNITY_MATRIX_MVP, v.vertex);
+					#if UNITY_UV_STARTS_AT_TOP
+					float scale = -1.0;
+					#else
+					float scale = 1.0;
+					#endif
+					o.uvgrab.xy = (float2(o.vertex.x, o.vertex.y*scale) + o.vertex.w) * 0.5;
+					o.uvgrab.zw = o.vertex.zw;
+					o.uvbump = (TRANSFORM_TEX(v.texcoord, _Normal)) +(TRANSFORM_TEX(v.texcoord, _NormalDetail));
+					o.uvmain = TRANSFORM_TEX( v.texcoord, _MainTex );
+					UNITY_TRANSFER_FOG(o,o.vertex);
+					return o;
+				}
 
-sampler2D _GrabTexture;
-float4 _GrabTexture_TexelSize;
-sampler2D _NormalMap;
-sampler2D _NormalDetail;
-sampler2D _MainTex;
-float2 none = (0, 0);
+				sampler2D _GrabTexture;
+				float4 _GrabTexture_TexelSize;
+				sampler2D _NormalMap;
+				sampler2D _NormalDetail;
+				sampler2D _MainTex;
+				float2 none = (0, 0);
+			fixed4 _Color;
 
-half4 frag (v2f i) : SV_Target
-{
-	// calculate perturbed coordinates
-	half2 bump = UnpackNormal(tex2D( _NormalMap, i.uvmain)).rg; // we could optimize this by just reading the x & y without reconstructing the Z
-	half2 bump2 = UnpackNormal(tex2D(_NormalDetail, i.uvbump)).rg; // we could optimize this by just reading the x & y without reconstructing the Z
-	half2 bumpCom  = (bump + bump2) * 0.5;
-	float2 offset = bumpCom * _BumpAmt * _GrabTexture_TexelSize.xy;
-	i.uvgrab.xy = offset * i.uvgrab.z + i.uvgrab.xy;
-	
-	half4 col = tex2Dproj( _GrabTexture, UNITY_PROJ_COORD(i.uvgrab));
-	half4 tint = tex2D(_MainTex, i.uvmain);
-	col *= tint;
-	UNITY_APPLY_FOG(i.fogCoord, col);
-	return col;
-}
-ENDCG
+				half4 frag (v2f i) : SV_Target
+				{
+					// calculate perturbed coordinates
+					half2 bump = UnpackNormal(tex2D( _NormalMap, i.uvmain)).rg; // we could optimize this by just reading the x & y without reconstructing the Z
+					half2 bump2 = UnpackNormal(tex2D(_NormalDetail, i.uvbump)).rg; // we could optimize this by just reading the x & y without reconstructing the Z
+					half2 bumpCom  = (bump + bump2);// * 0.5;
+					float2 offset = bumpCom * _BumpAmt * _GrabTexture_TexelSize.xy;
+					i.uvgrab.xy = offset * i.uvgrab.z + i.uvgrab.xy;
+					
+					half4 col = tex2Dproj( _GrabTexture, UNITY_PROJ_COORD(i.uvgrab));
+					half4 tint = tex2D(_MainTex, i.uvmain);
+					col *=  _Color;//tint;
+					UNITY_APPLY_FOG(i.fogCoord, col);
+					return col;
+				}
+				ENDCG
 
 
 			}
 	   
+			
 			CGPROGRAM
 			
 			#pragma target 5.0
@@ -164,22 +166,24 @@ ENDCG
 				float2 uv_MainTex;
 				float2 uv_NormalMap;
 				float2 uv_NormalDetail;
-				 fixed facing : VFACE;
+				fixed facing : VFACE;
 			};
 	 
 			
 			half _Glossiness;
 			half _Metallic;
 			fixed4 _Color;
+		
 			
 			void surf (Input IN, inout SurfaceOutputStandard o)
 			{
+				fixed3 COL = {127,127,127};
 				fixed4 c = tex2D (_MainTex, IN.uv_MainTex) * _Color;
-				o.Albedo = c.rgb;			
+				o.Albedo = _Color.rgb;			
 				o.Normal = UnpackNormal(tex2D(_NormalMap, IN.uv_NormalMap) + tex2D (_NormalDetail, IN.uv_NormalDetail)*2-1);
 				o.Metallic = _Metallic;
 				o.Smoothness = _Glossiness;
-				o.Alpha = c.a;
+				o.Alpha = c.a;		
 				
 				
 			}
