@@ -1,23 +1,26 @@
-﻿Shader "RealWater/PBR_Refractive_Tesselation"
+﻿
+
+Shader "RealWater/PBR_Refractive_Tesselation"
 {
     Properties
     {
         _Color ("Color", Color) = (1,1,1,1)
         _MainTex ("Albedo (RGB)", 2D) = "white" {}
-		_NormalMap ("Simulation Normal Map", 2D) = "bump" {}
+		_NormalMap ("Simulation Map", 2D) = "bump" {}
 		_NormalDetail ("Normal Detail Map", 2D) = "bump" {}
-        _Glossiness ("Smoothness", Range(0,1)) = 0.5
-        _Metallic ("Metallic", Range(0,1)) = 0.0
+		_Glossiness("Smoothness", Range(0,1)) = 0.5
+		_Metallic("Metallic", Range(0,1)) = 0.0
 
-		_BumpAmt  ("Distortion", range (0,256)) = 10
-        _Tess ("Tessellation", Range(1,162)) = 4
+		_RefMult("Refraction Detail Map Multiplier", Range(1,50)) = 1
+		_Distortion  ("Distortion", range (0,256)) = 100
+        _Tess ("Tessellation", Range(1,100)) = 4
         _Displacement ("Displacement", Range(-10.0, 10.0)) = 0.3
     }
 	
 	Category 
 	{
 		//Transparent in queue so that other objects drawn before this one.
-		  Tags {"Queue" = "Transparent" "RenderType"="Transparent" }
+		 Tags {"Queue" = "Transparent" "RenderType"="Transparent" }
 	
 		SubShader
 		{
@@ -35,9 +38,9 @@
 		
 			Pass
 			{
-				Name "Refra"
-				Tags { "LightMode" = "Always" }
-				
+				Name "Refract"
+				Tags{ "LightMode" = "Always" }
+
 				CGPROGRAM
 				#pragma vertex vert
 				#pragma fragment frag
@@ -57,15 +60,15 @@
 					UNITY_FOG_COORDS(3)
 				};
 
-				float _BumpAmt;
+				float _Distortion;
 				float4 _Normal_ST;
 				float4 _NormalDetail_ST;
 				float4 _MainTex_ST;
 
-				v2f vert (appdata_t v)
+				v2f vert(appdata_t v)
 				{
 					v2f o;
-					o.vertex = mul(UNITY_MATRIX_MVP, v.vertex);
+					o.vertex = UnityObjectToClipPos(v.vertex);
 					#if UNITY_UV_STARTS_AT_TOP
 					float scale = -1.0;
 					#else
@@ -73,9 +76,9 @@
 					#endif
 					o.uvgrab.xy = (float2(o.vertex.x, o.vertex.y*scale) + o.vertex.w) * 0.5;
 					o.uvgrab.zw = o.vertex.zw;
-					o.uvbump = (TRANSFORM_TEX(v.texcoord, _Normal)) +(TRANSFORM_TEX(v.texcoord, _NormalDetail));
-					o.uvmain = TRANSFORM_TEX( v.texcoord, _MainTex );
-					UNITY_TRANSFER_FOG(o,o.vertex);
+					o.uvbump = (TRANSFORM_TEX(v.texcoord, _Normal)) + (TRANSFORM_TEX(v.texcoord, _NormalDetail));
+					o.uvmain = TRANSFORM_TEX(v.texcoord, _MainTex);
+					//UNITY_TRANSFER_FOG(o,o.vertex);
 					return o;
 				}
 
@@ -85,27 +88,29 @@
 				sampler2D _NormalDetail;
 				sampler2D _MainTex;
 				float2 none = (0, 0);
-			fixed4 _Color;
+				fixed4 _Color;
+				float _RefMult;
 
-				half4 frag (v2f i) : SV_Target
+				half4 frag(v2f i) : SV_Target
 				{
 					// calculate perturbed coordinates
-					half2 bump = UnpackNormal(tex2D( _NormalMap, i.uvmain)).rg; // we could optimize this by just reading the x & y without reconstructing the Z
-					half2 bump2 = UnpackNormal(tex2D(_NormalDetail, i.uvbump)).rg; // we could optimize this by just reading the x & y without reconstructing the Z
-					half2 bumpCom  = (bump + bump2);// * 0.5;
-					float2 offset = bumpCom * _BumpAmt * _GrabTexture_TexelSize.xy;
-					i.uvgrab.xy = offset * i.uvgrab.z + i.uvgrab.xy;
-					
-					half4 col = tex2Dproj( _GrabTexture, UNITY_PROJ_COORD(i.uvgrab));
-					half4 tint = tex2D(_MainTex, i.uvmain);
-					col *=  _Color;//tint;
-					UNITY_APPLY_FOG(i.fogCoord, col);
+					half2 bump = UnpackNormal(tex2D(_NormalMap, i.uvmain)).rg; // we could optimize this by just reading the x & y without reconstructing the Z
+					half2 bump2 = _RefMult * UnpackNormal(tex2D(_NormalDetail, i.uvbump)).rg ; // we could optimize this by just reading the x & y without reconstructing the Z
+					half2 bumpCom = (bump + bump2);
+					float2 offset = bumpCom * _Distortion * _GrabTexture_TexelSize.xy;
+					#ifdef UNITY_Z_0_FAR_FROM_CLIPSPACE //to handle recent standard asset package on older version of unity (before 5.5)
+						i.uvgrab.xy = offset * UNITY_Z_0_FAR_FROM_CLIPSPACE(i.uvgrab.z) + i.uvgrab.xy;
+					#else
+						i.uvgrab.xy = offset * i.uvgrab.z + i.uvgrab.xy;
+					#endif
+
+					half4 col = tex2Dproj(_GrabTexture, UNITY_PROJ_COORD(i.uvgrab));
+					half4 tint;
 					return col;
 				}
+				
 				ENDCG
-
-
-			}
+		}
 	   
 			
 			CGPROGRAM
@@ -113,6 +118,7 @@
 			#pragma target 5.0
 			#include "Tessellation.cginc"
 			#include "UnityCG.cginc"
+			
 	 
 			//Edge Based
 			//#pragma surface surf Standard fullforwardshadows alpha:fade vertex:disp tessellate:tessEdge
@@ -158,9 +164,7 @@
 			//   return UnityEdgeLengthBasedTess (v0.vertex, v1.vertex, v2.vertex, _EdgeLength);
 			//}
 			   
-		
-			
-	 
+
 			struct Input 
 			{
 				float2 uv_MainTex;
@@ -173,18 +177,19 @@
 			half _Glossiness;
 			half _Metallic;
 			fixed4 _Color;
-		
 			
 			void surf (Input IN, inout SurfaceOutputStandard o)
-			{
-				fixed3 COL = {127,127,127};
+			{		
 				fixed4 c = tex2D (_MainTex, IN.uv_MainTex) * _Color;
-				o.Albedo = _Color.rgb;			
+				o.Albedo = c.rgb;			
 				o.Normal = UnpackNormal(tex2D(_NormalMap, IN.uv_NormalMap) + tex2D (_NormalDetail, IN.uv_NormalDetail)*2-1);
 				o.Metallic = _Metallic;
 				o.Smoothness = _Glossiness;
 				o.Alpha = c.a;		
 				
+				//Flip normals of backside of mesh
+				if (IN.facing < 0.5)
+					o.Normal *= -1.0;
 				
 			}
 			ENDCG
