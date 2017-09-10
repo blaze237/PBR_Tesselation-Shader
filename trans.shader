@@ -10,7 +10,8 @@
 		_Glossiness("Smoothness", Range(0,1)) = 0.5
 		_Metallic("Metallic", Range(0,1)) = 0.0
 
-		_RefMult("Refraction Detail Map Multiplier", Range(1,50)) = 1
+		_RefMultMain("Refraction Simulation Map Multiplier", Range(0.1,2)) = 1
+		_RefMultDetail("Refraction Detail Map Multiplier", Range(0.1,50)) = 1
 		_Distortion  ("Distortion", range (0,256)) = 100
         _Tess ("Tessellation", Range(1,100)) = 4
         _Displacement ("Displacement", Range(-10.0, 10.0)) = 0.3
@@ -81,9 +82,10 @@
 					#endif
 					o.uvgrab.xy = (float2(o.vertex.x, o.vertex.y*scale) + o.vertex.w) * 0.5;
 					o.uvgrab.zw = o.vertex.zw;
-					o.uvbump =  TRANSFORM_TEX(v.texcoord, _NormalDetail) + TRANSFORM_TEX(v.texcoord, _NormalDetail2); //TRANSFORM_TEX(v.texcoord, _Normal) +
+					o.uvbump =  TRANSFORM_TEX(v.texcoord, _Normal) + TRANSFORM_TEX(v.texcoord, _NormalDetail);// + TRANSFORM_TEX(v.texcoord, _NormalDetail2); //TRANSFORM_TEX(v.texcoord, _Normal) +
 					o.uvmain = TRANSFORM_TEX(v.texcoord, _MainTex);
-					UNITY_TRANSFER_FOG(o,o.vertex);
+					//o.uvbump2 = TRANSFORM_TEX(v.texcoord, _MainTex);
+					//UNITY_TRANSFER_FOG(o,o.vertex);
 					return o;
 				}
 
@@ -96,16 +98,17 @@
 				sampler2D _MainTex;
 				float2 none = (0, 0);
 				fixed4 _Color;
-				float _RefMult;
+				float _RefMultDetail;
+				float _RefMultMain;
 
 				half4 frag(v2f i) : SV_Target
 				{
 					// calculate perturbed coordinates
-					half2 bump = UnpackNormal(tex2D(_NormalMap, i.uvmain)).rg; // we could optimize this by just reading the x & y without reconstructing the Z
-					half2 bump2 = _RefMult * UnpackNormal(tex2D(_NormalDetail, i.uvbump)).rg; // we could optimize this by just reading the x & y without reconstructing the Z
-					half2 bump3 = _RefMult * UnpackNormal(tex2D(_NormalDetail2, i.uvbump)).rg;
+					half2 bump = _RefMultMain *UnpackNormal(tex2D(_NormalMap, i.uvmain)).rg; // we could optimize this by just reading the x & y without reconstructing the Z
+					half2 bump2 = _RefMultDetail * UnpackNormal(tex2D(_NormalDetail, i.uvbump)).rg; // we could optimize this by just reading the x & y without reconstructing the Z
+					half2 bump3 = _RefMultDetail * UnpackNormal(tex2D(_NormalDetail2, i.uvbump)).rg;
 					
-					half2 bumpCom = (bump + bump2 + bump3);
+					half2 bumpCom = (bump  + bump2 + bump3);
 					float2 offset = bumpCom * _Distortion * _GrabTexture_TexelSize.xy;
 					#ifdef UNITY_Z_0_FAR_FROM_CLIPSPACE //to handle recent standard asset package on older version of unity (before 5.5)
 						i.uvgrab.xy = offset * UNITY_Z_0_FAR_FROM_CLIPSPACE(i.uvgrab.z) + i.uvgrab.xy;
