@@ -55,13 +55,15 @@
 				struct v2f {
 					float4 vertex : SV_POSITION;
 					float4 uvgrab : TEXCOORD0;
-					float2 uvbump : TEXCOORD1;
+					float2 uvSim : TEXCOORD1;
 					float2 uvmain : TEXCOORD2;
-					UNITY_FOG_COORDS(3)
+					float2 uvDetail1 : TEXCOORD3;
+					float2 uvDetail2 : TEXCOORD4;
+					UNITY_FOG_COORDS(5)
 				};
 
 				float _Distortion;
-				float4 _Normal_ST;
+				float4 _NormalMap_ST;
 				float4 _NormalDetail_ST;
 				float4 _NormalDetail2_ST;
 				float4 _MainTex_ST;
@@ -70,11 +72,13 @@
 				v2f vert(appdata_t v)
 				{
 					v2f o;
+
 					#if UNITY_VERSION >= 540
 					o.vertex = UnityObjectToClipPos(v.vertex);
 					#else
 					o.vertex = mul(UNITY_MATRIX_MVP, v.vertex);
 					#endif
+
 					#if UNITY_UV_STARTS_AT_TOP
 					float scale = -1.0;
 					#else
@@ -82,10 +86,14 @@
 					#endif
 					o.uvgrab.xy = (float2(o.vertex.x, o.vertex.y*scale) + o.vertex.w) * 0.5;
 					o.uvgrab.zw = o.vertex.zw;
-					o.uvbump =  TRANSFORM_TEX(v.texcoord, _Normal) + TRANSFORM_TEX(v.texcoord, _NormalDetail);// + TRANSFORM_TEX(v.texcoord, _NormalDetail2); //TRANSFORM_TEX(v.texcoord, _Normal) +
+
+					//Set up UV mapping for each texture					
 					o.uvmain = TRANSFORM_TEX(v.texcoord, _MainTex);
-					//o.uvbump2 = TRANSFORM_TEX(v.texcoord, _MainTex);
-					//UNITY_TRANSFER_FOG(o,o.vertex);
+					o.uvSim = TRANSFORM_TEX(v.texcoord, _NormalMap);
+					o.uvDetail1 =  TRANSFORM_TEX(v.texcoord, _NormalDetail);
+					o.uvDetail2 =  TRANSFORM_TEX(v.texcoord, _NormalDetail2); 
+				
+					UNITY_TRANSFER_FOG(o,o.vertex);
 					return o;
 				}
 
@@ -96,7 +104,6 @@
 				sampler2D _NormalDetail2;
 
 				sampler2D _MainTex;
-				float2 none = (0, 0);
 				fixed4 _Color;
 				float _RefMultDetail;
 				float _RefMultMain;
@@ -104,12 +111,12 @@
 				half4 frag(v2f i) : SV_Target
 				{
 					// calculate perturbed coordinates
-					half2 bump = _RefMultMain *UnpackNormal(tex2D(_NormalMap, i.uvmain)).rg; // we could optimize this by just reading the x & y without reconstructing the Z
-					half2 bump2 = _RefMultDetail * UnpackNormal(tex2D(_NormalDetail, i.uvbump)).rg; // we could optimize this by just reading the x & y without reconstructing the Z
-					half2 bump3 = _RefMultDetail * UnpackNormal(tex2D(_NormalDetail2, i.uvbump)).rg;
-					
+					half2 bump = _RefMultMain *UnpackNormal(tex2D(_NormalMap, i.uvSim)).rg; 
+					half2 bump2 = _RefMultDetail * UnpackNormal(tex2D(_NormalDetail, i.uvDetail1)).rg; 
+					half2 bump3 = _RefMultDetail * UnpackNormal(tex2D(_NormalDetail2, i.uvDetail2)).rg;
 					half2 bumpCom = (bump  + bump2 + bump3);
 					float2 offset = bumpCom * _Distortion * _GrabTexture_TexelSize.xy;
+
 					#ifdef UNITY_Z_0_FAR_FROM_CLIPSPACE //to handle recent standard asset package on older version of unity (before 5.5)
 						i.uvgrab.xy = offset * UNITY_Z_0_FAR_FROM_CLIPSPACE(i.uvgrab.z) + i.uvgrab.xy;
 					#else
@@ -117,10 +124,8 @@
 					#endif
 
 					half4 col = tex2Dproj(_GrabTexture, UNITY_PROJ_COORD(i.uvgrab));
-					half4 tint;
 					return col;
 				}
-				
 				ENDCG
 		}
 	   
@@ -187,11 +192,12 @@
 				fixed facing : VFACE;
 			};
 	 
-			inline fixed3 combineNormalMaps (fixed3 base, fixed3 detail) 
+			//Correctly combines two normal maps.
+			inline fixed3 combineNormals (fixed3 nMap1, fixed3 nMap2) 
 			{
-				base += fixed3(0, 0, 1);
-				detail *= fixed3(-1, -1, 1);
-				return base * dot(base, detail) / base.z - detail;
+				nMap1 += fixed3(0, 0, 1);
+				nMap2 *= fixed3(-1, -1, 1);
+				return (nMap1 * (dot(nMap1, nMap2) / nMap1.z) - nMap2);
 			}
 			
 			half _Glossiness;
@@ -203,11 +209,11 @@
 				fixed4 c = tex2D (_MainTex, IN.uv_MainTex) * _Color;
 				o.Albedo = c.rgb;			
 				
-				fixed3 BaseNormal = UnpackNormal(tex2D(_NormalMap, IN.uv_NormalMap));
-				fixed3 DetailNormal1 = UnpackNormal(tex2D (_NormalDetail, IN.uv_NormalDetail));
-				fixed3 DetailNormal2 = UnpackNormal(tex2D (_NormalDetail2, IN.uv_NormalDetail2));
+				fixed3 normalSim = UnpackNormal(tex2D(_NormalMap, IN.uv_NormalMap));
+				fixed3 normalDetail1 = UnpackNormal(tex2D (_NormalDetail, IN.uv_NormalDetail));
+				fixed3 normalDetail2 = UnpackNormal(tex2D (_NormalDetail2, IN.uv_NormalDetail2));
 
-				o.Normal =  combineNormalMaps(combineNormalMaps(BaseNormal, DetailNormal1), DetailNormal2 );
+				o.Normal =  combineNormals(combineNormals(normalSim, normalDetail1), normalDetail2);
 
 				o.Metallic = _Metallic;
 				o.Smoothness = _Glossiness;
@@ -215,12 +221,8 @@
 				
 				//Flip normals of backside of mesh
 				if (IN.facing < 0.5)
-					o.Normal *= -1.0;
-				
+					o.Normal *= -1.0;		
 			}
-
-
-			
 			ENDCG
 		}
 		FallBack "Standard"
