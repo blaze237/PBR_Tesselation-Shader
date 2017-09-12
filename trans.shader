@@ -10,9 +10,10 @@
 		_Glossiness("Smoothness", Range(0,1)) = 0.5
 		_Metallic("Metallic", Range(0,1)) = 0.0
 
-		_RefMultMain("Refraction Simulation Map Multiplier", Range(0.1,2)) = 1
-		_RefMultDetail("Refraction Detail Map Multiplier", Range(0.1,50)) = 1
+		_RefMultMain("Simulation Ref Mult", Range(0.1,2)) = 1
+		_RefMultDetail("Detail Map Ref Mult", Range(0.1,50)) = 1
 		_Distortion  ("Distortion", range (0,256)) = 100
+
         _Tess ("Tessellation", Range(1,100)) = 4
         _Displacement ("Displacement", Range(-10.0, 10.0)) = 0.3
     }
@@ -66,8 +67,6 @@
 				float4 _NormalMap_ST;
 				float4 _NormalDetail_ST;
 				float4 _NormalDetail2_ST;
-				float4 _MainTex_ST;
-
 
 				v2f vert(appdata_t v)
 				{
@@ -84,11 +83,11 @@
 					#else
 					float scale = 1.0;
 					#endif
+
 					o.uvgrab.xy = (float2(o.vertex.x, o.vertex.y*scale) + o.vertex.w) * 0.5;
 					o.uvgrab.zw = o.vertex.zw;
 
 					//Set up UV mapping for each texture					
-					o.uvmain = TRANSFORM_TEX(v.texcoord, _MainTex);
 					o.uvSim = TRANSFORM_TEX(v.texcoord, _NormalMap);
 					o.uvDetail1 =  TRANSFORM_TEX(v.texcoord, _NormalDetail);
 					o.uvDetail2 =  TRANSFORM_TEX(v.texcoord, _NormalDetail2); 
@@ -102,9 +101,6 @@
 				sampler2D _NormalMap;
 				sampler2D _NormalDetail;
 				sampler2D _NormalDetail2;
-
-				sampler2D _MainTex;
-				fixed4 _Color;
 				float _RefMultDetail;
 				float _RefMultMain;
 
