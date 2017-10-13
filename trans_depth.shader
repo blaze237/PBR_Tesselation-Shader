@@ -4,6 +4,7 @@
     {
         _Color ("Color", Color) = (1,1,1,1)
         _MainTex ("Albedo (RGB)", 2D) = "white" {}
+		
 		_NormalMap ("Simulation Map", 2D) = "bump" {}
 		_NormalDetail ("Detail Map 1", 2D) = "bump" {}
 		_NormalDetail2 ("Detail Map 2", 2D) = "bump" {}
@@ -11,18 +12,26 @@
 		_Glossiness("Smoothness", Range(0,1)) = 0.5
 		_Metallic("Metallic", Range(0,1)) = 0.0
 
+		//Refraction settings
 		_RefMultMain("Simulation Refraction Mult", Range(0.1,2)) = 1
 		_RefMultDetail("Detail Map Refraction Mult", Range(0.1,50)) = 1
 		_Distortion  ("Refraction Distortion", range (0,256)) = 100
 
+		//Tesselation settinga
 		_EdgeLength ("Tessellation Factor", Range(1,50)) = 15
         _Displacement ("Tessellation Displacement", Range(-10.0, 10.0)) = 0.3
 
+		//Detph settings
 		_maxFog ("Max Depth Fog", Range(1,25)) = 25
 		_maxFade("Max Depth Fade", Range(0,1)) = 0
 		_depthScale("Depth Scaling",Range(1,25)) = 1
 
+		//Aberration Settings
 		_AberrationOffset("Aberration",Range(0.001,0.05)) = 1.0
+
+		//Foam settings
+		_FoamTex("Foam Texture(RGB)",2D) = "white" {}
+		_FoamIntensity("Foam Intensity",Range(0.1,10)) = 2
     }
 
 	SubShader
@@ -118,6 +127,7 @@
 			sampler2D _NormalDetail2;
 			float _RefMultDetail;
 			float _RefMultMain;
+		
 
 			fixed4 frag(v2f i) : SV_Target
 			{
@@ -167,6 +177,7 @@
 		CGPROGRAM
 		#pragma multi_compile TESS_ON TESS_OFF 
 		#pragma multi_compile DEPTH_ON DEPTH_OFF
+		#pragma multi_compile FOAM_ON FOAM_OFF
 		#pragma target 5.0
 		#include "Tessellation.cginc"
 		#include "UnityCG.cginc"
@@ -180,16 +191,19 @@
 			float2 texcoord : TEXCOORD0;
 			float2 texcoord1 : TEXCOORD1;
 			float2 texcoord2 : TEXCOORD2;
+			float2 texcoor3 : TEXCOORD3;
 
 		
 
 		};
 
 		sampler2D _MainTex;
+		sampler2D _FoamTex;
 		sampler2D _NormalMap;	
 		sampler2D _NormalDetail;
 		sampler2D _NormalDetail2;
 		float _Displacement;
+		float _FoamIntensity;
 			
 		void disp (inout appdata v)
 		{
@@ -215,6 +229,7 @@
 		struct Input 
 		{
 			float2 uv_MainTex;
+			float2 uv_FoamTex;
 			float2 uv_NormalMap;
 			float2 uv_NormalDetail;
 			float2 uv_NormalDetail2;
@@ -252,13 +267,33 @@
 			
 		void surf (Input IN, inout SurfaceOutputStandard o)
 		{		
-			   // Albedo comes from a texture tinted by color
-            fixed4 c = tex2D (_MainTex, IN.uv_MainTex) * _Color;
+			// Albedo comes from a texture tinted by color
+			fixed4 c = tex2D(_MainTex, IN.uv_MainTex) * _Color;
+			fixed4 foam = tex2D(_FoamTex, IN.uv_FoamTex);
+
+		//	fixed4 c = (1+((tex2D (_NormalMap, IN.uv_NormalMap).g) - 0.5) * 20) * _Color;
+
+			float waveHeight = min(1,_FoamIntensity * (abs((tex2D (_NormalMap, IN.uv_NormalMap).g) - 0.5)));
+
+			/*
+				MAYBE INSTEAF OF DIRECT WAVE HEIGHT PROPORTIONALUTY, HAVE IT SO FOAM ONLY IF HEIHGT ABOVE CUT OFF, THEN PROPORTIONAL WITHIN THAT RANGE
+
+			*/
+
+			#if FOAM_ON
+				c = (1-waveHeight)*c + (waveHeight)*foam;
+			#endif
+
             o.Albedo = c.rgb;
             // Metallic and smoothness come from slider variables
-            o.Metallic = _Metallic;
-            o.Smoothness = _Glossiness;
- 
+			#if FOAM_ON
+				o.Metallic = _Metallic * (1-waveHeight);
+				o.Smoothness = max(0.9,_Glossiness*(1-waveHeight));
+			#else
+				o.Metallic = _Metallic;
+				o.Smoothness = _Glossiness;
+			#endif
+
 			fixed3 normalSim = UnpackNormal(tex2D(_NormalMap, IN.uv_NormalMap));
 			fixed3 normalDetail1 = UnpackNormal(tex2D (_NormalDetail, IN.uv_NormalDetail));
 			fixed3 normalDetail2 = UnpackNormal(tex2D (_NormalDetail2, IN.uv_NormalDetail2));
@@ -282,13 +317,23 @@
 			if (IN.facing < 0.5)
 			{
 				#if DEPTH_ON
-					o.Alpha = c.a * max(_maxFade, (min((partZ/_depthScale),_maxFog)));
+					#if FOAM_ON
+							o.Alpha = 1/(1-waveHeight) * c.a * max(_maxFade, (min((partZ/_depthScale),_maxFog)));
+					#else
+						o.Alpha = c.a * max(_maxFade, (min((partZ/_depthScale),_maxFog)));
+					#endif
 				#endif
 				o.Normal *= -1.0;
-
 			}
-			else	
-				 o.Alpha = c.a * fade;
+			else
+			{	
+				#if FOAM_ON
+					o.Alpha = c.a * fade * 1/(1-waveHeight);
+				#else
+						o.Alpha = c.a * fade;
+				#endif
+			}
+			
 		}
 		ENDCG
 
