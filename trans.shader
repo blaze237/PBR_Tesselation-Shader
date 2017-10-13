@@ -4,18 +4,34 @@
     {
         _Color ("Color", Color) = (1,1,1,1)
         _MainTex ("Albedo (RGB)", 2D) = "white" {}
+		
 		_NormalMap ("Simulation Map", 2D) = "bump" {}
 		_NormalDetail ("Detail Map 1", 2D) = "bump" {}
 		_NormalDetail2 ("Detail Map 2", 2D) = "bump" {}
+		[Header(PBR Settings)]
 		_Glossiness("Smoothness", Range(0,1)) = 0.5
 		_Metallic("Metallic", Range(0,1)) = 0.0
 
+		//Refraction settings
 		_RefMultMain("Simulation Refraction Mult", Range(0.1,2)) = 1
 		_RefMultDetail("Detail Map Refraction Mult", Range(0.1,50)) = 1
 		_Distortion  ("Refraction Distortion", range (0,256)) = 100
 
+		//Tesselation settinga
 		_EdgeLength ("Tessellation Factor", Range(1,50)) = 15
         _Displacement ("Tessellation Displacement", Range(-10.0, 10.0)) = 0.3
+
+		//Detph settings
+		_maxFog ("Max Depth Fog", Range(1,25)) = 25
+		_maxFade("Max Depth Fade", Range(0,1)) = 0
+		_depthScale("Depth Scaling",Range(1,25)) = 1
+
+		//Aberration Settings
+		_AberrationOffset("Aberration",Range(0.001,0.05)) = 1.0
+
+		//Foam settings
+		_FoamTex("Foam Texture(RGB)",2D) = "white" {}
+		_FoamIntensity("Foam Intensity",Range(0.1,10)) = 2
     }
 
 	SubShader
@@ -35,6 +51,7 @@
 			Tags { "LightMode" = "Always" }
 		}
 		
+		//Refraction Pass
 		Pass
 		{
 			Name "Refract"
@@ -42,6 +59,8 @@
 
 			CGPROGRAM
 			#pragma multi_compile REFRACTION_ON REFRACTION_OFF
+			#pragma multi_compile ABERRATION_ON ABERRATION_OFF
+
 			
 			#pragma vertex vert
 			#pragma fragment frag
@@ -67,6 +86,7 @@
 			float4 _NormalMap_ST;
 			float4 _NormalDetail_ST;
 			float4 _NormalDetail2_ST;
+			 uniform float _AberrationOffset;
 
 			v2f vert(appdata_t v)
 			{
@@ -99,6 +119,7 @@
 				return o;
 			}
 
+
 			sampler2D _GrabTexture;
 			float4 _GrabTexture_TexelSize;
 			sampler2D _NormalMap;
@@ -106,8 +127,9 @@
 			sampler2D _NormalDetail2;
 			float _RefMultDetail;
 			float _RefMultMain;
+		
 
-			half4 frag(v2f i) : SV_Target
+			fixed4 frag(v2f i) : SV_Target
 			{
 				#if REFRACTION_ON
 					// calculate perturbed coordinates
@@ -124,23 +146,42 @@
 					#endif
 
 				#endif
-				
-				half4 col = tex2Dproj(_GrabTexture, UNITY_PROJ_COORD(i.uvgrab));
-				return col;
+
+				fixed4 col;
+
+				#if ABERRATION_ON
+				//	_AberrationOffset /= 300.0f;
+
+					fixed4 red = tex2Dproj(_GrabTexture, i.uvgrab  - _AberrationOffset) ;
+					fixed4 green = tex2Dproj(_GrabTexture, i.uvgrab) ;
+					fixed4 blue = tex2Dproj(_GrabTexture, i.uvgrab + _AberrationOffset) ;
+
+					col =  fixed4(red.r, green.g, blue.b, 1.0f); 
+
+				#else
+					col = tex2Dproj(_GrabTexture, UNITY_PROJ_COORD(i.uvgrab));
+				#endif
+
+                return col;
 			}
 	
 			ENDCG
+
+
 		}
+
 		
 		//#endif
 	   
 			
 		CGPROGRAM
-		#pragma multi_compile TESS_ON TESS_OFF	
+		#pragma multi_compile TESS_ON TESS_OFF 
+		#pragma multi_compile DEPTH_ON DEPTH_OFF
+		#pragma multi_compile FOAM_ON FOAM_OFF
 		#pragma target 5.0
 		#include "Tessellation.cginc"
 		#include "UnityCG.cginc"
-		#pragma surface surf Standard fullforwardshadows alpha:fade vertex:disp tessellate:tessEdge
+		#pragma surface surf Standard fullforwardshadows alpha:fade vertex:disp tessellate:tessEdge 
 			
 		struct appdata 
 		{
@@ -150,16 +191,28 @@
 			float2 texcoord : TEXCOORD0;
 			float2 texcoord1 : TEXCOORD1;
 			float2 texcoord2 : TEXCOORD2;
+			float2 texcoor3 : TEXCOORD3;
+
+			fixed4 color : COLOR;
+
 		};
 
 		sampler2D _MainTex;
+		sampler2D _FoamTex;
 		sampler2D _NormalMap;	
 		sampler2D _NormalDetail;
 		sampler2D _NormalDetail2;
 		float _Displacement;
+		float _FoamIntensity;
 			
 		void disp (inout appdata v)
 		{
+			//Compute eye depth and store in color semantic.
+			//Needs doing this way due to bug in unity with custom vert output and tesselation
+			#if DEPTH_ON
+				COMPUTE_EYEDEPTH(v.color.r);
+			#endif
+
 			#if TESS_ON
 				float d = ((tex2Dlod( _NormalMap , float4(v.texcoord.xy ,0,0)).a - 0.5)) * _Displacement;
 				v.vertex.xyz += v.normal * d;
@@ -182,10 +235,15 @@
 		struct Input 
 		{
 			float2 uv_MainTex;
+			float2 uv_FoamTex;
 			float2 uv_NormalMap;
 			float2 uv_NormalDetail;
 			float2 uv_NormalDetail2;
 			fixed facing : VFACE;
+			 float4 screenPos;
+            float eyeDepth;
+			 float3 localPos;
+			  float4 color : COLOR;
 		};
 	 
 		//Correctly combines two normal maps.
@@ -199,28 +257,89 @@
 		half _Glossiness;
 		half _Metallic;
 		fixed4 _Color;
+		float _maxFog;
+		float _maxFade;
+		float _depthScale;
+
+		 sampler2D_float _CameraDepthTexture;
+        float4 _CameraDepthTexture_TexelSize;
+
+		
 			
 		void surf (Input IN, inout SurfaceOutputStandard o)
 		{		
-			fixed4 c = tex2D (_MainTex, IN.uv_MainTex) * _Color;
-			o.Albedo = c.rgb;			
-				
+			// Albedo comes from a texture tinted by color
+			fixed4 c = tex2D(_MainTex, IN.uv_MainTex) * _Color;
+			fixed4 foam = tex2D(_FoamTex, IN.uv_FoamTex);
+
+		//	fixed4 c = (1+((tex2D (_NormalMap, IN.uv_NormalMap).g) - 0.5) * 20) * _Color;
+
+			float waveHeight = min(1,_FoamIntensity * (abs((tex2D (_NormalMap, IN.uv_NormalMap).g) - 0.5)));
+
+			/*
+				MAYBE INSTEAF OF DIRECT WAVE HEIGHT PROPORTIONALUTY, HAVE IT SO FOAM ONLY IF HEIHGT ABOVE CUT OFF, THEN PROPORTIONAL WITHIN THAT RANGE
+
+			*/
+
+			#if FOAM_ON
+				c = (1-waveHeight)*c + (waveHeight)*foam;
+			#endif
+
+            o.Albedo = c.rgb;
+            // Metallic and smoothness come from slider variables
+			#if FOAM_ON
+				o.Metallic = _Metallic * (1-waveHeight);
+				o.Smoothness = max(0.9,_Glossiness*(1-waveHeight));
+			#else
+				o.Metallic = _Metallic;
+				o.Smoothness = _Glossiness;
+			#endif
+
 			fixed3 normalSim = UnpackNormal(tex2D(_NormalMap, IN.uv_NormalMap));
 			fixed3 normalDetail1 = UnpackNormal(tex2D (_NormalDetail, IN.uv_NormalDetail));
 			fixed3 normalDetail2 = UnpackNormal(tex2D (_NormalDetail2, IN.uv_NormalDetail2));
 
 			o.Normal =  combineNormals(combineNormals(normalSim, normalDetail1), normalDetail2);
 
-			o.Metallic = _Metallic;
-			o.Smoothness = _Glossiness;
-			o.Alpha = c.a;		
-				
-			//Flip normals of backside of mesh
+
+			float rawZ = SAMPLE_DEPTH_TEXTURE_PROJ(_CameraDepthTexture, UNITY_PROJ_COORD(IN.screenPos));
+			#if DEPTH_ON
+				float sceneZ = LinearEyeDepth(rawZ);
+				float partZ = IN.color.r;//IN.eyeDepth;
+			#endif
+
+            float fade = 1.0;
+			#if DEPTH_ON
+			  if ( rawZ > 0.0 ) // Make sure the depth texture exists
+					fade = max(_maxFade, (min((sceneZ - partZ)/_depthScale,_maxFog)));
+			#endif
+
+				//Flip normals of backside of mesh
 			if (IN.facing < 0.5)
-				o.Normal *= -1.0;		
+			{
+				#if DEPTH_ON
+					#if FOAM_ON
+							o.Alpha = 1/(1-waveHeight) * c.a * max(_maxFade, (min((partZ/_depthScale),_maxFog)));
+					#else
+						o.Alpha = c.a * max(_maxFade, (min((partZ/_depthScale),_maxFog)));
+					#endif
+				#endif
+				o.Normal *= -1.0;
+			}
+			else
+			{	
+				#if FOAM_ON
+					o.Alpha = c.a * fade * 1/(1-waveHeight);
+				#else
+						o.Alpha = c.a * fade;
+				#endif
+			}
+			
 		}
 		ENDCG
 
+
+		
 
 	}
 	FallBack "Standard"
