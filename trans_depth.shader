@@ -21,6 +21,8 @@
 		_maxFog ("Max Depth Fog", Range(1,25)) = 25
 		_maxFade("Max Depth Fade", Range(0,1)) = 0
 		_depthScale("Depth Scaling",Range(1,25)) = 1
+
+		_AberrationOffset("Aberration",Range(0.001,0.05)) = 1.0
     }
 
 	SubShader
@@ -48,6 +50,8 @@
 
 			CGPROGRAM
 			#pragma multi_compile REFRACTION_ON REFRACTION_OFF
+			#pragma multi_compile ABERRATION_ON ABERRATION_OFF
+
 			
 			#pragma vertex vert
 			#pragma fragment frag
@@ -73,6 +77,7 @@
 			float4 _NormalMap_ST;
 			float4 _NormalDetail_ST;
 			float4 _NormalDetail2_ST;
+			 uniform float _AberrationOffset;
 
 			v2f vert(appdata_t v)
 			{
@@ -105,6 +110,7 @@
 				return o;
 			}
 
+
 			sampler2D _GrabTexture;
 			float4 _GrabTexture_TexelSize;
 			sampler2D _NormalMap;
@@ -130,12 +136,30 @@
 					#endif
 
 				#endif
-				fixed4 col = tex2Dproj(_GrabTexture, UNITY_PROJ_COORD(i.uvgrab));
-				return col;
+
+				fixed4 col;
+
+				#if ABERRATION_ON
+				//	_AberrationOffset /= 300.0f;
+
+					fixed4 red = tex2Dproj(_GrabTexture, i.uvgrab  - _AberrationOffset) ;
+					fixed4 green = tex2Dproj(_GrabTexture, i.uvgrab) ;
+					fixed4 blue = tex2Dproj(_GrabTexture, i.uvgrab + _AberrationOffset) ;
+
+					col =  fixed4(red.r, green.g, blue.b, 1.0f); 
+
+				#else
+					col = tex2Dproj(_GrabTexture, UNITY_PROJ_COORD(i.uvgrab));
+				#endif
+
+                return col;
 			}
 	
 			ENDCG
+
+
 		}
+
 		
 		//#endif
 	   
