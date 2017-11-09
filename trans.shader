@@ -2,36 +2,47 @@
 {
     Properties
     {
-        _Color ("Color", Color) = (1,1,1,1)
-        _MainTex ("Albedo (RGB)", 2D) = "white" {}
-		
+        _Color ("Tint Colour", Color) = (1,1,1,1)
+        _MainTex ("Tint Texture (RGB)", 2D) = "white" {}
 		_NormalMap ("Simulation Map", 2D) = "bump" {}
 		_NormalDetail ("Detail Map 1", 2D) = "bump" {}
 		_NormalDetail2 ("Detail Map 2", 2D) = "bump" {}
+
 		[Header(PBR Settings)]
-		_Glossiness("Smoothness", Range(0,1)) = 0.5
+		_Smoothness("Smoothness", Range(0,1)) = 0.5
 		_Metallic("Metallic", Range(0,1)) = 0.0
 
-		//Refraction settings
+		[Header(Refraction Settings)]
+		[Toggle(REFRACTION)]
+        _REFRACTION ("Enable Refraction", Float) = 1
 		_RefMultMain("Simulation Refraction Mult", Range(0.1,2)) = 1
 		_RefMultDetail("Detail Map Refraction Mult", Range(0.1,50)) = 1
 		_Distortion  ("Refraction Distortion", range (0,256)) = 100
 
-		//Tesselation settinga
+		[Header(Tessellation Settings)]
+		[Toggle(TESSELLATION)]
+		TESSELATION ("Enable Tessellation", Float) = 1
 		_EdgeLength ("Tessellation Factor", Range(1,50)) = 15
-        _Displacement ("Tessellation Displacement", Range(-10.0, 10.0)) = 0.3
+        _Displacement ("Tessellation Displacement", Range(-5.0, 5.0)) = 1.5
 
-		//Detph settings
-		_maxFog ("Max Depth Fog", Range(1,25)) = 25
-		_maxFade("Max Depth Fade", Range(0,1)) = 0
-		_depthScale("Depth Scaling",Range(1,25)) = 1
+		[Header(Depth Settings)]
+		[Toggle(DEPTH_FOG)]
+		DEPTH_FOG ("Enable Depth Effects", Float) = 1
+		_maxFog ("Max Depth Fog Multiplier", Range(1,10)) = 10
+		_maxFade("Max Depth Fade Multiplier", Range(0,1)) = 0
+		_depthScale("Depth Scaling Factor",Range(0.1,25)) = 1
 
-		//Aberration Settings
-		_AberrationOffset("Aberration",Range(0.001,0.05)) = 1.0
+		[Header(Aberration Settings)]
+		[Toggle(ABERRATION)]
+		ABERRATION ("Enable Chromatic Aberration", Float) = 0
+		_AberrationOffset("Aberration Level",Range(0.001,0.05)) = 1.0
 
-		//Foam settings
+		[Header(Wave Foam Settings)]
+		[Toggle(FOAM)]
+		FOAM ("Enable Wave Foam", Float) = 0
 		_FoamTex("Foam Texture(RGB)",2D) = "white" {}
-		_FoamIntensity("Foam Intensity",Range(0.1,10)) = 2
+		_FoamIntensity("Foam Intensity", Range(0.1,10)) = 2
+		_FoamCuttoff("Foam Height Cuttoff", Range(0,0.1)) = 0
     }
 
 	SubShader
@@ -51,15 +62,15 @@
 			Tags { "LightMode" = "Always" }
 		}
 		
-		//Refraction Pass
+		//Refraction and Aberration Pass
 		Pass
 		{
 			Name "Refract"
 			Tags{ "LightMode" = "Always" }
 
 			CGPROGRAM
-			#pragma multi_compile REFRACTION_ON REFRACTION_OFF
-			#pragma multi_compile ABERRATION_ON ABERRATION_OFF
+            #pragma shader_feature REFRACTION
+			#pragma shader_feature ABERRATION
 
 			
 			#pragma vertex vert
@@ -88,34 +99,39 @@
 			float4 _NormalDetail2_ST;
 			 uniform float _AberrationOffset;
 
+
 			v2f vert(appdata_t v)
 			{
 				v2f o;
 				UNITY_INITIALIZE_OUTPUT(v2f,o);
-				#if REFRACTION_ON
+				#if defined(REFRACTION) || defined(ABERRATION)
 
+					//Unity handles this diffently depending on the editor version
 					#if UNITY_VERSION >= 540
-					o.vertex = UnityObjectToClipPos(v.vertex);
+						o.vertex = UnityObjectToClipPos(v.vertex);
 					#else
-					o.vertex = mul(UNITY_MATRIX_MVP, v.vertex);
+						o.vertex = mul(UNITY_MATRIX_MVP, v.vertex);
 					#endif
 
 					#if UNITY_UV_STARTS_AT_TOP
-					float scale = -1.0;
+						float scale = -1.0;
 					#else
-					float scale = 1.0;
+						float scale = 1.0;
 					#endif
 
 					o.uvgrab.xy = (float2(o.vertex.x, o.vertex.y*scale) + o.vertex.w) * 0.5;
 					o.uvgrab.zw = o.vertex.zw;
 
-					//Set up UV mapping for each texture					
-					o.uvSim = TRANSFORM_TEX(v.texcoord, _NormalMap);
-					o.uvDetail1 =  TRANSFORM_TEX(v.texcoord, _NormalDetail);
-					o.uvDetail2 =  TRANSFORM_TEX(v.texcoord, _NormalDetail2); 
+					#ifdef REFRACTION
+						//Set up UV mapping for each texture					
+						o.uvSim = TRANSFORM_TEX(v.texcoord, _NormalMap);
+						o.uvDetail1 =  TRANSFORM_TEX(v.texcoord, _NormalDetail);
+						o.uvDetail2 =  TRANSFORM_TEX(v.texcoord, _NormalDetail2); 
+					#endif
 				
 					UNITY_TRANSFER_FOG(o,o.vertex);
 				#endif
+
 				return o;
 			}
 
@@ -131,7 +147,10 @@
 
 			fixed4 frag(v2f i) : SV_Target
 			{
-				#if REFRACTION_ON
+			
+				fixed4 col;
+
+				#ifdef REFRACTION
 					// calculate perturbed coordinates
 					half2 bump = _RefMultMain *UnpackNormal(tex2D(_NormalMap, i.uvSim)).rg; 
 					half2 bump2 = _RefMultDetail * UnpackNormal(tex2D(_NormalDetail, i.uvDetail1)).rg; 
@@ -147,21 +166,15 @@
 
 				#endif
 
-				fixed4 col;
-
-				#if ABERRATION_ON
-				//	_AberrationOffset /= 300.0f;
-
+				#ifdef ABERRATION
 					fixed4 red = tex2Dproj(_GrabTexture, i.uvgrab  - _AberrationOffset) ;
 					fixed4 green = tex2Dproj(_GrabTexture, i.uvgrab) ;
 					fixed4 blue = tex2Dproj(_GrabTexture, i.uvgrab + _AberrationOffset) ;
-
 					col =  fixed4(red.r, green.g, blue.b, 1.0f); 
 
 				#else
 					col = tex2Dproj(_GrabTexture, UNITY_PROJ_COORD(i.uvgrab));
 				#endif
-
                 return col;
 			}
 	
@@ -170,18 +183,18 @@
 
 		}
 
-		
-		//#endif
-	   
-			
+
+		//Standard shader pass. In this surface shader depth fog, wave foam and tesselation are applied
 		CGPROGRAM
-		#pragma multi_compile TESS_ON TESS_OFF 
-		#pragma multi_compile DEPTH_ON DEPTH_OFF
-		#pragma multi_compile FOAM_ON FOAM_OFF
+        #pragma shader_feature TESSELLATION
+		#pragma shader_feature DEPTH_FOG
+		#pragma shader_feature FOAM
 		#pragma target 5.0
+		#pragma surface surf Standard fullforwardshadows alpha:fade vertex:disp tessellate:tessEdge 
 		#include "Tessellation.cginc"
 		#include "UnityCG.cginc"
-		#pragma surface surf Standard fullforwardshadows alpha:fade vertex:disp tessellate:tessEdge 
+
+		static const float TESS_MAX = 50; //Should be set to the max of the _EdgeLength range
 			
 		struct appdata 
 		{
@@ -193,6 +206,8 @@
 			float2 texcoord2 : TEXCOORD2;
 			float2 texcoor3 : TEXCOORD3;
 
+			//Due to limitations with using custom vert outputs with unity's built in tesselation shader
+			//We use the COLOR input semantic to pass in the extra data needed for depth fog calculations.
 			fixed4 color : COLOR;
 
 		};
@@ -204,34 +219,33 @@
 		sampler2D _NormalDetail2;
 		float _Displacement;
 		float _FoamIntensity;
-			
+
+		//Calculates tesselation and vertex depth data			
 		void disp (inout appdata v)
 		{
 			//Compute eye depth and store in color semantic.
-			//Needs doing this way due to bug in unity with custom vert output and tesselation
-			#if DEPTH_ON
+			#ifdef DEPTH_FOG
 				COMPUTE_EYEDEPTH(v.color.r);
 			#endif
 
-			#if TESS_ON
+			#ifdef TESSELLATION
 				float d = ((tex2Dlod( _NormalMap , float4(v.texcoord.xy ,0,0)).a - 0.5)) * _Displacement;
 				v.vertex.xyz += v.normal * d;
 			#endif
 		}
 
+		//Applies tesselation
 		float _EdgeLength;
 		float4 tessEdge (appdata v0, appdata v1, appdata v2)
 		{
-			#if TESS_ON
-				return UnityEdgeLengthBasedTess (v0.vertex, v1.vertex, v2.vertex, _EdgeLength);
+			#ifdef TESSELLATION
+				return UnityEdgeLengthBasedTess (v0.vertex, v1.vertex, v2.vertex, TESS_MAX - _EdgeLength);
 			#else
-
 				float4 ret = {1,1,1,1};
 				return ret;
 		   #endif
 		}
-	
-			 
+		 
 		struct Input 
 		{
 			float2 uv_MainTex;
@@ -240,10 +254,9 @@
 			float2 uv_NormalDetail;
 			float2 uv_NormalDetail2;
 			fixed facing : VFACE;
-			 float4 screenPos;
-            float eyeDepth;
-			 float3 localPos;
-			  float4 color : COLOR;
+			float4 screenPos;
+			float3 localPos;
+			float4 color : COLOR;
 		};
 	 
 		//Correctly combines two normal maps.
@@ -253,98 +266,97 @@
 			nMap2 *= fixed3(-1, -1, 1);
 			return (nMap1 * (dot(nMap1, nMap2) / nMap1.z) - nMap2);
 		}
-			
-		half _Glossiness;
+		
+		//Shader properties	
+		half _Smoothness;
 		half _Metallic;
 		fixed4 _Color;
 		float _maxFog;
 		float _maxFade;
 		float _depthScale;
+		float _FoamCuttoff;
 
-		 sampler2D_float _CameraDepthTexture;
+		//Used im depth effects
+		sampler2D_float _CameraDepthTexture;
         float4 _CameraDepthTexture_TexelSize;
-
-		
 			
 		void surf (Input IN, inout SurfaceOutputStandard o)
 		{		
-			// Albedo comes from a texture tinted by color
+			//Multiplier used in applying foam
+			float foamMultiplier = 1;
+
+			//Multipliers applied to alpha channel to create depth effects. Does nothing if depth effects not enabled.
+			float depthMultiplier = 1.0;
+			float depthMultiplierFlip = 1.0;
+
+			//Read in main texture
 			fixed4 c = tex2D(_MainTex, IN.uv_MainTex) * _Color;
-			fixed4 foam = tex2D(_FoamTex, IN.uv_FoamTex);
 
-		//	fixed4 c = (1+((tex2D (_NormalMap, IN.uv_NormalMap).g) - 0.5) * 20) * _Color;
+			//Set up foam effect variables
+			#ifdef FOAM
+				//Read in foam texture
+				fixed4 foam = tex2D(_FoamTex, IN.uv_FoamTex);
 
-			float waveHeight = min(1,_FoamIntensity * (abs((tex2D (_NormalMap, IN.uv_NormalMap).g) - 0.5)));
+				//The value of the simulation map at this pixel position.
+				float val = (abs((tex2D (_NormalMap, IN.uv_NormalMap).g) - 0.5));
 
-			/*
-				MAYBE INSTEAF OF DIRECT WAVE HEIGHT PROPORTIONALUTY, HAVE IT SO FOAM ONLY IF HEIHGT ABOVE CUT OFF, THEN PROPORTIONAL WITHIN THAT RANGE
-
-			*/
-
-			#if FOAM_ON
-				c = (1-waveHeight)*c + (waveHeight)*foam;
+				//Only blend in areas above the cuttof
+				if(abs(val) >= _FoamCuttoff)
+				{
+					//Max blend should technicaly be 1, but we make it 0.99 to avoid potential divide by zero errors later
+					foamMultiplier = 1 - min(0.99 , (_FoamIntensity * val));
+					
+					//Blend the the main texture with the foam texture
+					c = (foamMultiplier) * c + (1 - foamMultiplier) * foam;
+				}
 			#endif
 
-            o.Albedo = c.rgb;
-            // Metallic and smoothness come from slider variables
-			#if FOAM_ON
-				o.Metallic = _Metallic * (1-waveHeight);
-				o.Smoothness = max(0.9,_Glossiness*(1-waveHeight));
-			#else
-				o.Metallic = _Metallic;
-				o.Smoothness = _Glossiness;
+			//Set up depth effect variables
+			#ifdef DEPTH_FOG
+				//Read in depth values
+				float rawZ = SAMPLE_DEPTH_TEXTURE_PROJ(_CameraDepthTexture, UNITY_PROJ_COORD(IN.screenPos));
+				float sceneZ = LinearEyeDepth(rawZ);
+				float partZ = IN.color.r;//Use colour sematics to do equivalent of IN.eyeDepth
+			
+				//Calculate ratio of height difference to depth scaling factor
+				float depthRatio = min((sceneZ - partZ)/_depthScale,_maxFog);
+
+				
+				if ( rawZ > 0.0 ) // Make sure the depth texture exists
+				{
+					//Front face Multiplier is a value in the range _maxFade to _maxFog determined by the ratio of height difference to depth scaling factor
+					depthMultiplier = max(_maxFade, depthRatio); 
+
+					//Rear face multiplier is similar. but here the max value depends soley on the camera distance to the underside of the water plane.
+					depthMultiplierFlip = max(_maxFade, (min((partZ/_depthScale),_maxFog)));
+				}
+					
 			#endif
 
+			//Read in the normal maps
 			fixed3 normalSim = UnpackNormal(tex2D(_NormalMap, IN.uv_NormalMap));
 			fixed3 normalDetail1 = UnpackNormal(tex2D (_NormalDetail, IN.uv_NormalDetail));
 			fixed3 normalDetail2 = UnpackNormal(tex2D (_NormalDetail2, IN.uv_NormalDetail2));
 
+			//Set surface paramaters
+            o.Albedo = c.rgb;
+			o.Metallic = _Metallic * foamMultiplier;
+			o.Smoothness = max(0.9,_Smoothness * foamMultiplier);
 			o.Normal =  combineNormals(combineNormals(normalSim, normalDetail1), normalDetail2);
+			o.Alpha = 1/(foamMultiplier) * c.a; 
 
-
-			float rawZ = SAMPLE_DEPTH_TEXTURE_PROJ(_CameraDepthTexture, UNITY_PROJ_COORD(IN.screenPos));
-			#if DEPTH_ON
-				float sceneZ = LinearEyeDepth(rawZ);
-				float partZ = IN.color.r;//IN.eyeDepth;
-			#endif
-
-            float fade = 1.0;
-			#if DEPTH_ON
-			  if ( rawZ > 0.0 ) // Make sure the depth texture exists
-					fade = max(_maxFade, (min((sceneZ - partZ)/_depthScale,_maxFog)));
-			#endif
-
-				//Flip normals of backside of mesh
-			if (IN.facing < 0.5)
-			{
-				#if DEPTH_ON
-					#if FOAM_ON
-							o.Alpha = 1/(1-waveHeight) * c.a * max(_maxFade, (min((partZ/_depthScale),_maxFog)));
-					#else
-						o.Alpha = c.a * max(_maxFade, (min((partZ/_depthScale),_maxFog)));
-					#endif
-				#endif
-				o.Normal *= -1.0;
-			}
+			//For front facing verticies, just applu the depth multiplier to alpha channel
+			if(IN.facing >= 0.5)
+				o.Alpha *=  depthMultiplier;
+			//For rear facing verticies, apply the fliped depth multiplier to the alpha channel and flip the normals to make both sides of plane visible.
 			else
-			{	
-				#if FOAM_ON
-					o.Alpha = c.a * fade * 1/(1-waveHeight);
-				#else
-						o.Alpha = c.a * fade;
-				#endif
-			}
-			
+			{
+				o.Alpha *= depthMultiplierFlip;
+				o.Normal *= -1.0;
+			}		
 		}
 		ENDCG
-
-
-		
-
 	}
 	FallBack "Standard"
-
-	CustomEditor "RealWaterShaderEditor"
-
 }
  
